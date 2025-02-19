@@ -1,6 +1,19 @@
 import numpy as np
 
 
+def quat2mat(q):
+    """Convert quaternion to rotation matrix."""
+    w, x, y, z = q
+    R = np.array(
+        [
+            [1 - 2 * y**2 - 2 * z**2, 2 * x * y - 2 * w * z, 2 * x * z + 2 * w * y],
+            [2 * x * y + 2 * w * z, 1 - 2 * x**2 - 2 * z**2, 2 * y * z - 2 * w * x],
+            [2 * x * z - 2 * w * y, 2 * y * z + 2 * w * x, 1 - 2 * x**2 - 2 * y**2],
+        ]
+    )
+    return R.astype("float32")
+
+
 def parse_colmap_data(cameras_txt, images_txt, points3D_txt):
     """Parses COLMAP output files and returns data in a structured format."""
 
