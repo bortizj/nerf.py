@@ -1,15 +1,19 @@
 from torch.utils.data import Dataset
+import torchvision.transforms as transforms
 
 from nerf.utils.utils import quat2mat
+from nerf.utils.utils import positional_encoding
 
 import cv2
 import numpy as np
 
 
 class NeRFDataset(Dataset):
-    def __init__(self, cameras, images, image_dir):
+    def __init__(self, cameras, images, image_dir, L=10):
         self.cameras = cameras
         self.images = images
+
+        self.L = L
 
         # List of image names
         self.image_names = list(images.keys())
@@ -48,14 +52,17 @@ class NeRFDataset(Dataset):
         # Ray generation (example - adapt to your NeRF setup)
         rays_o, rays_d = self.generate_rays(pose, camera["width"], camera["height"], focal, cx, cy)
 
+        rays_d = positional_encoding(rays_d, self.L)
+        rays_o = positional_encoding(rays_o, self.L)
+
         return {
-            "image": img,  # (H, W, 3)
-            "pose": pose,  # (4, 4)
-            "rays_o": rays_o,  # (H*W, 3)
-            "rays_d": rays_d,  # (H*W, 3)
-            "focal": focal,
-            "cx": cx,
-            "cy": cy,
+            "image": transforms.ToTensor(img),  # (H, W, 3)
+            "pose": transforms.ToTensor(pose),  # (4, 4)
+            "rays_o": transforms.ToTensor(rays_o),  # (H*W, 3)
+            "rays_d": transforms.ToTensor(rays_d),  # (H*W, 3)
+            "focal": transforms.ToTensor(focal),
+            "cx": transforms.ToTensor(cx),
+            "cy": transforms.ToTensor(cy),
         }
 
     def generate_rays(self, pose, width, height, focal, cx, cy):

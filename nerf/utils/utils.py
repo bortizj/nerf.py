@@ -1,6 +1,15 @@
 import numpy as np
 
 
+def positional_encoding(x, L):
+    """Positional encoding for NeRF."""
+    out = [x]
+    for ii in range(L):
+        out.append(np.sin(2.0**ii * x))
+        out.append(np.cos(2.0**ii * x))
+    return np.cat(out, -1)
+
+
 def quat2mat(q):
     """Convert quaternion to rotation matrix."""
     w, x, y, z = q
