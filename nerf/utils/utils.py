@@ -1,13 +1,73 @@
 import numpy as np
+import torch
+import cv2
+
+import tqdm
+
+
+def render_rays(model, rays_o, rays_d, near, far, num_samples, L_pos, L_dir, device):
+    """Renders rays using volume rendering."""
+
+    # Calculate t values (distances along rays)
+    t_vals = torch.linspace(near, far, num_samples).to(device)
+    z_vals = near + t_vals * torch.linalg.norm(rays_d, dim=-1, keepdims=True)  # (batch_size, num_samples)
+
+    # Calculate 3D points
+    pts = rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :, None]  # (batch_size, num_samples, 3)
+
+    # Positional encoding
+    pts_flat = pts.reshape(-1, 3)  # (batch_size * num_samples, 3)
+    pts_encoded = positional_encoding(pts_flat, L_pos)
+
+    # Positional encoding of view directions
+    rays_d_flat = rays_d.reshape(-1, 3)
+    rays_d_encoded = positional_encoding(rays_d_flat, L_dir)
+
+    # Expand view directions to match points
+    rays_d_encoded_expanded = rays_d_encoded[..., None, :].expand(
+        pts.shape[:-1] + (rays_d_encoded.shape[-1],)
+    )  # (batch_size, num_samples, 27)
+    rays_d_encoded_flat = rays_d_encoded_expanded.reshape(-1, rays_d_encoded.shape[-1])
+
+    # Evaluate NeRF network
+    rgba = model(pts_encoded, rays_d_encoded_flat)  # (batch_size * num_samples, 4)
+    rgba = rgba.reshape(pts.shape[:-1] + (4,))  # (batch_size, num_samples, 4)
+    rgb = torch.sigmoid(rgba[..., :3])  # (batch_size, num_samples, 3)
+    sigma = torch.relu(rgba[..., 3:])  # (batch_size, num_samples, 1)
+
+    # Volume rendering
+    delta_t = t_vals[1] - t_vals[0]
+    delta_t = delta_t * torch.ones_like(z_vals)  # (batch_size, num_samples)
+    alpha = 1.0 - torch.exp(-sigma * delta_t[..., None])  # (batch_size, num_samples, 1)
+    T = torch.cumprod(1.0 - alpha + 1e-10, dim=-2)  # add small number to avoid zero.
+    T = torch.cat([torch.ones_like(T[..., :1, :]), T[..., :-1, :]], dim=-2)  # (batch_size, num_samples, 1)
+    weights = alpha * T  # (batch_size, num_samples, 1)
+
+    rgb_rendered = torch.sum(weights * rgb, dim=-2)  # (batch_size, 3)
+
+    return rgb_rendered
 
 
 def positional_encoding(x, L):
-    """Positional encoding for NeRF."""
     out = [x]
-    for ii in range(L):
-        out.append(np.sin(2.0**ii * x))
-        out.append(np.cos(2.0**ii * x))
-    return np.cat(out, -1)
+    for jj in range(L):
+        out.append(torch.sin(2**jj * x))
+        out.append(torch.cos(2**jj * x))
+    return torch.cat(out, dim=1)
+
+
+def count_parameters(model):
+    """Count the number of parameters in a model."""
+    total_params = 0
+    param_pair = []
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        params = parameter.numel()
+        param_pair.append([name, params])
+        total_params += params
+
+    return total_params, param_pair
 
 
 def quat2mat(q):
@@ -101,3 +161,31 @@ def parse_colmap_data(cameras_txt, images_txt, points3D_txt):
             # You'll need to parse the TRACK[] part of the line if you need it.
 
     return cameras, images, points3D
+
+
+def save_predictions(model, loader, folder, device, samples_per_ray=128, l_pos=10, l_dir=4):
+    """Save the predictions to a file."""
+    model.eval()
+
+    tqdm_loop = tqdm.tqdm(loader, ncols=150, desc="Storing")
+    with torch.no_grad():
+        for ii, data in enumerate(tqdm_loop):
+            # The image data from the view
+            img = data["image"]
+
+            # The generated rays
+            rays_o = data["rays_o"].to(device=device)
+            rays_d = data["rays_d"].to(device=device)
+
+            # The predicted RGB values
+            pred_rgb = render_rays(model, rays_o, rays_d, 2.0, 6.0, samples_per_ray, l_pos, l_dir, device)
+
+            pred_rgb = np.array(pred_rgb.reshape(img.shape).squeeze(0).to("cpu").permute(1, 2, 0))
+            img = np.array(img.squeeze(0).to("cpu").permute(1, 2, 0))
+
+            out_img = np.clip(np.vstack((img, pred_rgb)), 0, 1)
+            out_img = (out_img * 255).astype("uint8")
+
+            cv2.imwrite(folder.joinpath(f"img_{ii}.png"), out_img)
+
+            tqdm_loop.set_postfix()

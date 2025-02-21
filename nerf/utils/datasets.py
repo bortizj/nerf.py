@@ -2,18 +2,25 @@ from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 
 from nerf.utils.utils import quat2mat
-from nerf.utils.utils import positional_encoding
 
 import cv2
 import numpy as np
 
 
 class NeRFDataset(Dataset):
-    def __init__(self, cameras, images, image_dir, L=10):
+
+    def __init__(self, cameras, images, image_dir, L_pos=10, L_dir=4, scale=1.0):
         self.cameras = cameras
         self.images = images
 
-        self.L = L
+        # The scale factor to downsample the images
+        self.scale = scale
+
+        self.transform = transforms.ToTensor()
+
+        # The number of positional encodings for the ray origins and directions
+        self.L_pos = L_pos
+        self.L_dir = L_dir
 
         # List of image names
         self.image_names = list(images.keys())
@@ -30,14 +37,16 @@ class NeRFDataset(Dataset):
         camera = self.cameras[camera_id]
 
         # Getting the camera parameters from the COLMAP dataset
-        focal = camera["params"][0]
-        cx = camera["params"][1]
-        cy = camera["params"][2]
+        focal = self.scale * camera["params"][0]
+        cx = self.scale * camera["params"][1]
+        cy = self.scale * camera["params"][2]
+        width = int(self.scale * camera["width"])
+        height = int(self.scale * camera["height"])
 
         # Loading the image
         image_path = str(self.image_dir.joinpath(image_name))
         img = cv2.imread(image_path)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
         img = img.astype("float32") / 255.0
 
         qvec = image_data["qvec"].astype("float32")
@@ -50,19 +59,16 @@ class NeRFDataset(Dataset):
         pose = pose.astype("float32")
 
         # Ray generation (example - adapt to your NeRF setup)
-        rays_o, rays_d = self.generate_rays(pose, camera["width"], camera["height"], focal, cx, cy)
-
-        rays_d = positional_encoding(rays_d, self.L)
-        rays_o = positional_encoding(rays_o, self.L)
+        rays_o, rays_d = self.generate_rays(pose, width, height, focal, cx, cy)
 
         return {
-            "image": transforms.ToTensor(img),  # (H, W, 3)
-            "pose": transforms.ToTensor(pose),  # (4, 4)
-            "rays_o": transforms.ToTensor(rays_o),  # (H*W, 3)
-            "rays_d": transforms.ToTensor(rays_d),  # (H*W, 3)
-            "focal": transforms.ToTensor(focal),
-            "cx": transforms.ToTensor(cx),
-            "cy": transforms.ToTensor(cy),
+            "image": self.transform(img),  # (H, W, 3)
+            "rays_o": self.transform(rays_o),  # (H*W, 3)
+            "rays_d": self.transform(rays_d),  # (H*W, 3)
+            "pose": pose,  # (4, 4)
+            "focal": focal,
+            "cx": cx,
+            "cy": cy,
         }
 
     def generate_rays(self, pose, width, height, focal, cx, cy):
@@ -79,7 +85,7 @@ class NeRFDataset(Dataset):
         # Ray origins are the camera's position in world space
         rays_o = np.broadcast_to(pose[:3, 3], rays_d.shape)  # (H, W, 3)
 
-        rays_d = rays_d.reshape(-1, 3)  # (H*W, 3)
-        rays_o = rays_o.reshape(-1, 3)  # (H*W, 3)
+        rays_d = rays_d.reshape(-1, 3).copy()  # (H*W, 3)
+        rays_o = rays_o.reshape(-1, 3).copy()  # (H*W, 3)
 
         return rays_o, rays_d
