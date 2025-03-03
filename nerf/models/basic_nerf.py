@@ -14,29 +14,31 @@ class NeRFNetwork(nn.Module):
         self.embedding_dim_pos = embedding_dim_pos
         self.embedding_dim_direction = embedding_dim_dir
 
+        alpha = 0.02
+
         self.blk1 = nn.Sequential(
             nn.Linear(embedding_dim_pos * 6 + 3, hiddem_dim),
-            nn.LeakyReLU(negative_slope=0.2),
+            nn.LeakyReLU(negative_slope=alpha),
             nn.Linear(hiddem_dim, hiddem_dim),
-            nn.LeakyReLU(negative_slope=0.2),
+            nn.LeakyReLU(negative_slope=alpha),
             nn.Linear(hiddem_dim, hiddem_dim),
-            nn.LeakyReLU(negative_slope=0.2),
+            nn.LeakyReLU(negative_slope=alpha),
             nn.Linear(hiddem_dim, hiddem_dim),
-            nn.LeakyReLU(negative_slope=0.2),
+            nn.LeakyReLU(negative_slope=alpha),
         )
 
         self.blk2 = nn.Sequential(
             nn.Linear(embedding_dim_pos * 6 + 3 + hiddem_dim, hiddem_dim),
-            nn.LeakyReLU(negative_slope=0.2),
+            nn.LeakyReLU(negative_slope=alpha),
             nn.Linear(hiddem_dim, hiddem_dim),
-            nn.LeakyReLU(negative_slope=0.2),
+            nn.LeakyReLU(negative_slope=alpha),
             nn.Linear(hiddem_dim, hiddem_dim),
-            nn.LeakyReLU(negative_slope=0.2),
+            nn.LeakyReLU(negative_slope=alpha),
             nn.Linear(hiddem_dim, hiddem_dim),
         )
 
         self.blk3 = nn.Sequential(
-            nn.Linear(embedding_dim_dir * 6 + 3 + hiddem_dim, hiddem_dim // 2), nn.LeakyReLU(negative_slope=0.2)
+            nn.Linear(embedding_dim_dir * 6 + 3 + hiddem_dim, hiddem_dim // 2), nn.LeakyReLU(negative_slope=alpha)
         )
 
         self.rgb_layer = nn.Sequential(nn.Linear(hiddem_dim // 2, 3))

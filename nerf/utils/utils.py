@@ -5,6 +5,24 @@ import cv2
 import tqdm
 
 
+def render_rays_chunked(model, rays_o, rays_d, near, far, num_samples, L_pos, L_dir, device, chunksize=1024):
+    """Renders rays in chunks."""
+    batch_size, num_rays, _ = rays_o.shape
+    rendered_rgbs = torch.zeros((batch_size, num_rays, 3), device=device)
+
+    if chunksize > num_rays:
+        chunksize = num_rays
+
+    for bb in range(batch_size):  # Iterate over batch dimension
+        for ii in range(0, num_rays, chunksize):
+            rays_o_chunk = rays_o[bb, ii : ii + chunksize]
+            rays_d_chunk = rays_d[bb, ii : ii + chunksize]
+            rgb_chunk = render_rays(model, rays_o_chunk, rays_d_chunk, near, far, num_samples, L_pos, L_dir, device)
+            rendered_rgbs[bb, ii : ii + chunksize] = rgb_chunk
+
+    return rendered_rgbs.reshape(batch_size, num_rays, 3)
+
+
 def render_rays(model, rays_o, rays_d, near, far, num_samples, L_pos, L_dir, device):
     """Renders rays using volume rendering."""
 
@@ -163,7 +181,7 @@ def parse_colmap_data(cameras_txt, images_txt, points3D_txt):
     return cameras, images, points3D
 
 
-def save_predictions(model, loader, folder, device, samples_per_ray=128, l_pos=10, l_dir=4):
+def save_predictions(model, loader, folder, device, samples_per_ray=128, l_pos=10, l_dir=4, near=2.0, far=6.0, chunksize=1024):
     """Save the predictions to a file."""
     model.eval()
 
@@ -172,20 +190,25 @@ def save_predictions(model, loader, folder, device, samples_per_ray=128, l_pos=1
         for ii, data in enumerate(tqdm_loop):
             # The image data from the view
             img = data["image"]
+            img_names = data["image_name"]
 
             # The generated rays
             rays_o = data["rays_o"].to(device=device)
             rays_d = data["rays_d"].to(device=device)
 
             # The predicted RGB values
-            pred_rgb = render_rays(model, rays_o, rays_d, 2.0, 6.0, samples_per_ray, l_pos, l_dir, device)
+            # pred_rgb = render_rays(model, rays_o, rays_d, near, far, samples_per_ray, l_pos, l_dir, device)
+            pred_rgb = render_rays_chunked(model, rays_o, rays_d, near, far, samples_per_ray, l_pos, l_dir, device, chunksize)
 
-            pred_rgb = np.array(pred_rgb.reshape(img.shape).squeeze(0).to("cpu").permute(1, 2, 0))
-            img = np.array(img.squeeze(0).to("cpu").permute(1, 2, 0))
+            pred_rgb = pred_rgb.reshape(img.shape)
 
-            out_img = np.clip(np.vstack((img, pred_rgb)), 0, 1)
-            out_img = (out_img * 255).astype("uint8")
+            for jj in range(img.shape[0]):
+                pred_rgb = np.array(pred_rgb[jj].squeeze(0).to("cpu").permute(1, 2, 0))
+                img = np.array(img[jj].squeeze(0).to("cpu").permute(1, 2, 0))
 
-            cv2.imwrite(folder.joinpath(f"img_{ii}.png"), out_img)
+                out_img = np.clip(np.vstack((img, pred_rgb)), 0, 1)
+                out_img = (out_img * 255).astype("uint8")
+
+                cv2.imwrite(folder.joinpath(f"{img_names[jj]}.png"), out_img)
 
             tqdm_loop.set_postfix()

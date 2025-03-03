@@ -63,12 +63,13 @@ class NeRFDataset(Dataset):
 
         return {
             "image": self.transform(img),  # (H, W, 3)
-            "rays_o": self.transform(rays_o),  # (H*W, 3)
-            "rays_d": self.transform(rays_d),  # (H*W, 3)
+            "rays_o": self.transform(rays_o).squeeze(0),  # (H*W, 3)
+            "rays_d": self.transform(rays_d).squeeze(0),  # (H*W, 3)
             "pose": pose,  # (4, 4)
             "focal": focal,
             "cx": cx,
             "cy": cy,
+            "image_name": image_name,
         }
 
     def generate_rays(self, pose, width, height, focal, cx, cy):
