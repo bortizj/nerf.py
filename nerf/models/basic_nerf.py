@@ -8,7 +8,7 @@ class NeRFNetwork(nn.Module):
     NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis
     """
 
-    def __init__(self, hiddem_dim=256, embedding_dim_pos=10, embedding_dim_dir=4):
+    def __init__(self, hiddem_dim=256, embedding_dim_pos=10, embedding_dim_dir=4, dropout_rate=0.2):
         super().__init__()
 
         self.embedding_dim_pos = embedding_dim_pos
@@ -19,21 +19,28 @@ class NeRFNetwork(nn.Module):
         self.blk1 = nn.Sequential(
             nn.Linear(embedding_dim_pos * 6 + 3, hiddem_dim),
             nn.LeakyReLU(negative_slope=alpha),
+            nn.Dropout(p=dropout_rate),
             nn.Linear(hiddem_dim, hiddem_dim),
             nn.LeakyReLU(negative_slope=alpha),
+            nn.Dropout(p=dropout_rate),
             nn.Linear(hiddem_dim, hiddem_dim),
             nn.LeakyReLU(negative_slope=alpha),
+            nn.Dropout(p=dropout_rate),
             nn.Linear(hiddem_dim, hiddem_dim),
             nn.LeakyReLU(negative_slope=alpha),
+            nn.Dropout(p=dropout_rate),
         )
 
         self.blk2 = nn.Sequential(
             nn.Linear(embedding_dim_pos * 6 + 3 + hiddem_dim, hiddem_dim),
             nn.LeakyReLU(negative_slope=alpha),
+            nn.Dropout(p=dropout_rate),
             nn.Linear(hiddem_dim, hiddem_dim),
             nn.LeakyReLU(negative_slope=alpha),
+            nn.Dropout(p=dropout_rate),
             nn.Linear(hiddem_dim, hiddem_dim),
             nn.LeakyReLU(negative_slope=alpha),
+            nn.Dropout(p=dropout_rate),
             nn.Linear(hiddem_dim, hiddem_dim),
         )
 
@@ -56,8 +63,8 @@ class NeRFNetwork(nn.Module):
     def forward(self, o, d):
         # Forward pass assumes that positional encoding was done out side of the model
         h = self.blk1(o)
-        tmp = self.blk2(torch.cat((h, o), dim=1))
 
+        tmp = self.blk2(torch.cat((h, o), dim=1))
         sigma = self.sig_layer(tmp)
 
         h = self.blk3(torch.cat((h, d), dim=1))

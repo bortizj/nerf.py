@@ -5,6 +5,15 @@ import cv2
 import tqdm
 
 
+def convert_secs_to_hms(seconds):
+    """Convert seconds to hours, minutes, and seconds."""
+    # Convert elapsed time to hours, minutes, and seconds
+    hours, rem = divmod(seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    return f"{int(hours)}:{int(minutes)}:{int(seconds)}"
+
+
 def render_rays_chunked(model, rays_o, rays_d, near, far, num_samples, L_pos, L_dir, device, chunksize=1024):
     """Renders rays in chunks."""
     batch_size, num_rays, _ = rays_o.shape

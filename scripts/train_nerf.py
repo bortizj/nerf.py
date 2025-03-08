@@ -1,4 +1,3 @@
-from pathlib import Path
 import numpy as np
 
 import tqdm
@@ -7,9 +6,12 @@ import torch
 from torch.utils.data import DataLoader
 
 from nerf.utils.datasets import NeRFDataset
-from nerf.utils.utils import parse_colmap_data, count_parameters, save_predictions, render_rays_chunked
+from nerf.utils.utils import parse_colmap_data, count_parameters
+from nerf.utils.utils import save_predictions, render_rays_chunked
+from nerf.utils.utils import convert_secs_to_hms
 from nerf.models.basic_nerf import NeRFNetwork
 
+import time
 
 from nerf import REPO_ROOT
 
@@ -17,9 +19,10 @@ from nerf import REPO_ROOT
 # Parameters for the trainer
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 LEARNING_RATE = 5e-4
+DROP_RATE = 0.25
 
 SAMPLES_PER_RAY = 128
-SCALE = 0.075
+SCALE = 0.05
 CHUNK_SIZE = 1024 * 32
 # Frequencies for the positional and directional encodings
 L_POS, L_DIR = 10, 4
@@ -28,11 +31,11 @@ BATCH_SIZE = 1
 NUM_WORKERS = 2
 PIN_MEMORY = True
 LOAD_MODEL = False
-NEAR = 0.05
-FAR = 3.0
+NEAR = 1.0
+FAR = 10.0
 
 
-def train_fun(loader, model, optimizer, loss_fn, scaler, prev_psnr):
+def train_fun(loader, model, optimizer, loss_fn, scaler, prev_psnr, prev_epoch):
     """
     Will do one epoch of the training
     """
@@ -65,8 +68,8 @@ def train_fun(loader, model, optimizer, loss_fn, scaler, prev_psnr):
         scaler.step(optimizer)
         scaler.update()
 
-        tqdm_loop.set_postfix(loss=loss.item(), psnr=prev_psnr)
         loss_list.append(loss.item())
+        tqdm_loop.set_postfix(loss=np.mean(loss_list), psnr=prev_psnr, epoch=prev_epoch)
 
     return loss_list
 
@@ -74,11 +77,11 @@ def train_fun(loader, model, optimizer, loss_fn, scaler, prev_psnr):
 if __name__ == "__main__":
     # Relevant paths to data
     path_colmap = REPO_ROOT.joinpath("data", "banana_export")
-    path_imgs = REPO_ROOT.joinpath("data", "frames")
+    path_imgs = REPO_ROOT.joinpath("data", "frames", "banana")
     cameras_txt = path_colmap.joinpath("cameras.txt")
     images_txt = path_colmap.joinpath("images.txt")
     points3D_txt = path_colmap.joinpath("points3D.txt")
-    path_model = REPO_ROOT.joinpath("data", "chiva_model_1.tar")
+    path_model = REPO_ROOT.joinpath("data", "banana_model_0.tar")
 
     epochs_dir = REPO_ROOT.joinpath("data", "epochs")
     params_dir = REPO_ROOT.joinpath("data", "params")
@@ -98,20 +101,18 @@ if __name__ == "__main__":
     # Defining the model
     input_ch = 2 * L_POS * 3 + 3
     input_ch_views = 2 * L_DIR * 3 + 3
-    nerf_model = NeRFNetwork().to(DEVICE)
+    nerf_model = NeRFNetwork(dropout_rate=DROP_RATE).to(DEVICE)
 
     # Loos function and optimizer for the generator model.
     # Autoscaler avoids gradients flush to zero due to numerical precision
     loss_fn = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(nerf_model.parameters(), lr=LEARNING_RATE)
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
     scaler = torch.amp.GradScaler(DEVICE)
 
     if LOAD_MODEL:
         checkpoint = torch.load(str(path_model))
         nerf_model.load_state_dict(checkpoint["state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer"])
-        scheduler.load_state_dict(checkpoint["scheduler"])
     else:
         nerf_model.init_weights()
 
@@ -125,11 +126,24 @@ if __name__ == "__main__":
     tqdm_loop = tqdm.tqdm(range(NUM_EPOCHS), ncols=150, desc="Epochs")
 
     prev_psnr = 0
+    total_time = 0
+
+    psnr_list = []
+    times_list = []
+
     for epoch in tqdm_loop:
-        loss = train_fun(train_loader, nerf_model, optimizer, loss_fn, scaler, prev_psnr)
+        start_time = time.time()
+
+        loss = train_fun(train_loader, nerf_model, optimizer, loss_fn, scaler, prev_psnr, epoch - 1)
 
         mse = np.mean(loss)
         prev_psnr = 20 * np.log10(1.0 / np.sqrt(mse))
+
+        lapse = time.time() - start_time
+        total_time += lapse
+
+        psnr_list.append(prev_psnr)
+        times_list.append(total_time)
 
         if (epoch + 1) % 10 == 0 or epoch == 0:
             folder = epochs_dir.joinpath(f"epoch_{epoch + 1}")
@@ -150,10 +164,11 @@ if __name__ == "__main__":
             state = {
                 "state_dict": nerf_model.state_dict(),
                 "optimizer": optimizer.state_dict(),
-                "scheduler": scheduler.state_dict(),
             }
             torch.save(state, str(params_dir.joinpath(f"epoch_{epoch + 1}.tar")))
 
-        tqdm_loop.set_postfix(MSE=mse)
+        tqdm_loop.set_postfix(e_time=convert_secs_to_hms(lapse), t_time=convert_secs_to_hms(total_time))
 
     input("Press Enter to finish!")
+    print(psnr_list)
+    print(times_list)
