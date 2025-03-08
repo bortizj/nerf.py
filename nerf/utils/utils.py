@@ -190,7 +190,9 @@ def parse_colmap_data(cameras_txt, images_txt, points3D_txt):
     return cameras, images, points3D
 
 
-def save_predictions(model, loader, folder, device, samples_per_ray=128, l_pos=10, l_dir=4, near=2.0, far=6.0, chunksize=1024):
+def save_predictions_nerf(
+    model, loader, folder, device, samples_per_ray=128, l_pos=10, l_dir=4, near=2.0, far=6.0, chunksize=1024
+):
     """Save the predictions to a file."""
     model.eval()
 
@@ -216,6 +218,41 @@ def save_predictions(model, loader, folder, device, samples_per_ray=128, l_pos=1
                 img = np.array(img[jj].squeeze(0).to("cpu").permute(1, 2, 0))
 
                 out_img = np.clip(np.vstack((img, pred_rgb)), 0, 1)
+                out_img = (out_img * 255).astype("uint8")
+
+                cv2.imwrite(folder.joinpath(f"{img_names[jj]}.png"), out_img)
+
+            tqdm_loop.set_postfix()
+
+
+def save_predictions_gs(model, loader, folder, device):
+    """Save the predictions to a file."""
+    model.eval()
+
+    tqdm_loop = tqdm.tqdm(loader, ncols=150, desc="Storing")
+    with torch.no_grad():
+        for ii, data in enumerate(tqdm_loop):
+            # The image data from the view
+            img_target = data["image"]
+            img_names = data["image_name"]
+
+            camera_pose = data["pose"].to(device=device)
+            focal = data["focal"].to(device=device)
+            cx = data["cx"].to(device=device)
+            cy = data["cy"].to(device=device)
+            image_width = data["width"].to(device=device)
+            image_height = data["height"].to(device=device)
+
+            # The predicted RGB values
+            pred_bgr = model(camera_pose, focal, cx, cy, image_width, image_height, device)
+
+            pred_bgr = pred_bgr.reshape(img.shape)
+
+            for jj in range(img_target.shape[0]):
+                pred = np.array(pred_bgr[jj].squeeze(0).to("cpu").permute(1, 2, 0))
+                img = np.array(img_target[jj].squeeze(0).to("cpu").permute(1, 2, 0))
+
+                out_img = np.clip(np.vstack((img, pred)), 0, 1)
                 out_img = (out_img * 255).astype("uint8")
 
                 cv2.imwrite(folder.joinpath(f"{img_names[jj]}.png"), out_img)

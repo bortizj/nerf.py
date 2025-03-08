@@ -90,3 +90,62 @@ class NeRFDataset(Dataset):
         rays_o = rays_o.reshape(-1, 3).copy()  # (H*W, 3)
 
         return rays_o, rays_d
+
+
+class GSDataset(Dataset):
+
+    def __init__(self, cameras, images, image_dir, scale=1.0):
+        self.cameras = cameras
+        self.images = images
+
+        # The scale factor to downsample the images
+        self.scale = scale
+
+        self.transform = transforms.ToTensor()
+
+        # List of image names
+        self.image_names = list(images.keys())
+        self.image_dir = image_dir
+
+    def __len__(self):
+        return len(self.image_names)
+
+    def __getitem__(self, idx):
+        # Getting the image data from the COLMAP dataset
+        image_name = self.image_names[idx]
+        image_data = self.images[image_name]
+        camera_id = image_data["camera_id"]
+        camera = self.cameras[camera_id]
+
+        # Getting the camera parameters from the COLMAP dataset
+        focal = self.scale * camera["params"][0]
+        cx = self.scale * camera["params"][1]
+        cy = self.scale * camera["params"][2]
+        width = int(self.scale * camera["width"])
+        height = int(self.scale * camera["height"])
+
+        # Loading the image
+        image_path = str(self.image_dir.joinpath(image_name))
+        img = cv2.imread(image_path)
+        img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
+        img = img.astype("float32") / 255.0
+
+        qvec = image_data["qvec"].astype("float32")
+        tvec = image_data["tvec"].astype("float32")
+        R = quat2mat(qvec)
+        pose = np.eye(4)
+        pose[:3, :3] = R
+        pose[:3, 3] = tvec
+
+        pose = pose.astype("float32")
+
+        return {
+            "image": self.transform(img),  # (H, W, 3)
+            "pose": pose,  # (4, 4)
+            "focal": focal,
+            "cx": cx,
+            "cy": cy,
+            "width": width,
+            "height": height,
+            "image_name": image_name,
+        }
